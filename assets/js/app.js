@@ -423,6 +423,230 @@ function updatePreview() {
   }
 }
 
+// ================== Editor Collapse Function ==================
+
+let isEditorCollapsed = false;
+
+function toggleEditor() {
+  const editorSection = document.getElementById('editor-section');
+  const resizer = document.getElementById('resizer');
+  const previewSection = document.getElementById('preview-section');
+  const toggleBtn = document.getElementById('toggle-editor-btn');
+  const expandBtn = document.getElementById('expand-editor-btn');
+
+  isEditorCollapsed = !isEditorCollapsed;
+
+  if (isEditorCollapsed) {
+    editorSection.style.display = 'none';
+    resizer.style.display = 'none';
+    previewSection.style.flex = '1 1 100%';
+    // Show expand button in preview header
+    if (expandBtn) {
+      expandBtn.classList.remove('hidden');
+      expandBtn.classList.add('flex');
+    }
+    showNotification('Editor collapsed. Click "Editor" button to expand.', 'info');
+  } else {
+    editorSection.style.display = 'flex';
+    if (window.innerWidth >= 768) {
+      resizer.style.display = 'block';
+    }
+    editorSection.style.flex = '1 1 40%';
+    previewSection.style.flex = '1 1 60%';
+    // Hide expand button in preview header
+    if (expandBtn) {
+      expandBtn.classList.remove('flex');
+      expandBtn.classList.add('hidden');
+    }
+    // Refresh CodeMirror
+    if (editor) editor.refresh();
+  }
+}
+
+// ================== Export to PNG Function ==================
+
+function exportToPNG() {
+  const svgElement = previewContent.querySelector('svg');
+  if (!svgElement) {
+    showNotification('No diagram to export. Create a diagram first!', 'error');
+    return;
+  }
+
+  try {
+    // Clone the SVG to avoid modifying the original
+    const svgClone = svgElement.cloneNode(true);
+
+    // Get computed dimensions - handle various Mermaid SVG formats
+    const bbox = svgElement.getBBox();
+    const viewBox = svgElement.getAttribute('viewBox');
+    const computedStyle = window.getComputedStyle(svgElement);
+
+    // Parse width/height - Mermaid often uses "100%" or values with "px"
+    let width = parseFloat(svgElement.getAttribute('width')) || 
+                parseFloat(computedStyle.width) || 
+                (viewBox ? parseFloat(viewBox.split(/\s+|,/)[2]) : 0) ||
+                bbox.width + bbox.x;
+    let height = parseFloat(svgElement.getAttribute('height')) || 
+                 parseFloat(computedStyle.height) || 
+                 (viewBox ? parseFloat(viewBox.split(/\s+|,/)[3]) : 0) ||
+                 bbox.height + bbox.y;
+
+    // Add padding
+    const padding = 40;
+    width = Math.max(width, bbox.width + bbox.x) + padding;
+    height = Math.max(height, bbox.height + bbox.y) + padding;
+
+    // Ensure valid dimensions
+    if (!width || width < 10) width = 800;
+    if (!height || height < 10) height = 600;
+
+    // Set explicit xmlns if missing
+    if (!svgClone.getAttribute('xmlns')) {
+      svgClone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    }
+    if (!svgClone.getAttribute('xmlns:xlink')) {
+      svgClone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
+    }
+
+    // Set explicit dimensions
+    svgClone.setAttribute('width', width);
+    svgClone.setAttribute('height', height);
+
+    // Set viewBox to capture everything
+    if (!viewBox) {
+      svgClone.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    }
+
+    // Add background rect
+    const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    bgRect.setAttribute('width', '100%');
+    bgRect.setAttribute('height', '100%');
+    bgRect.setAttribute('fill', 'white');
+    svgClone.insertBefore(bgRect, svgClone.firstChild);
+
+    // Serialize SVG
+    const serializer = new XMLSerializer();
+    let svgString = serializer.serializeToString(svgClone);
+
+    // Ensure proper XML declaration
+    if (!svgString.startsWith('<?xml')) {
+      svgString = '<?xml version="1.0" encoding="UTF-8"?>' + svgString;
+    }
+
+    // Create blob URL (works better than base64 for complex SVGs)
+    const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+    const blobUrl = URL.createObjectURL(svgBlob);
+
+    // Create canvas and draw
+    const img = new Image();
+    // Do NOT set crossOrigin - it causes issues with file:// protocol
+
+    img.onload = function () {
+      try {
+        const scale = 2; // High DPI
+        const canvas = document.createElement('canvas');
+        canvas.width = width * scale;
+        canvas.height = height * scale;
+
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.scale(scale, scale);
+        ctx.drawImage(img, 0, 0, width, height);
+
+        // Try to export as PNG
+        const pngDataUrl = canvas.toDataURL('image/png');
+
+        // Download
+        const diagramName = fileName.value || 'diagram';
+        const safeName = diagramName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        const link = document.createElement('a');
+        link.download = `${safeName}.png`;
+        link.href = pngDataUrl;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+        URL.revokeObjectURL(blobUrl);
+        showNotification('Diagram exported as PNG!', 'success');
+      } catch (canvasErr) {
+        // Canvas toDataURL failed (e.g., tainted canvas on file://)
+        console.warn('Canvas export failed, trying SVG fallback:', canvasErr);
+        URL.revokeObjectURL(blobUrl);
+        downloadAsSVG(svgString);
+      }
+    };
+
+    img.onerror = function (e) {
+      console.error('Image load error:', e);
+      URL.revokeObjectURL(blobUrl);
+      // Fallback: try base64 approach
+      try {
+        const svgBase64 = btoa(unescape(encodeURIComponent(svgString)));
+        const dataUrl = 'data:image/svg+xml;base64,' + svgBase64;
+        const img2 = new Image();
+        img2.onload = function() {
+          try {
+            const scale = 2;
+            const canvas = document.createElement('canvas');
+            canvas.width = width * scale;
+            canvas.height = height * scale;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.scale(scale, scale);
+            ctx.drawImage(img2, 0, 0, width, height);
+
+            const diagramName = fileName.value || 'diagram';
+            const safeName = diagramName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+            const link = document.createElement('a');
+            link.download = `${safeName}.png`;
+            link.href = canvas.toDataURL('image/png');
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            showNotification('Diagram exported as PNG!', 'success');
+          } catch(e2) {
+            downloadAsSVG(svgString);
+          }
+        };
+        img2.onerror = function() {
+          downloadAsSVG(svgString);
+        };
+        img2.src = dataUrl;
+      } catch (fallbackErr) {
+        downloadAsSVG(svgString);
+      }
+    };
+
+    img.src = blobUrl;
+  } catch (err) {
+    console.error('Export error:', err);
+    showNotification('Error exporting PNG: ' + err.message, 'error');
+  }
+}
+
+// ================== SVG Download Helper ==================
+
+function downloadAsSVG(svgString) {
+  try {
+    const diagramName = fileName.value || 'diagram';
+    const safeName = diagramName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    const blob = new Blob([svgString], { type: 'image/svg+xml' });
+    const link = document.createElement('a');
+    link.download = `${safeName}.svg`;
+    link.href = URL.createObjectURL(blob);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(link.href);
+    showNotification('Exported as SVG (use browser to convert to PNG)', 'info');
+  } catch (err) {
+    console.error('SVG export error:', err);
+    showNotification('Error exporting diagram', 'error');
+  }
+}
+
 // ================== Zoom/Pan Functions ==================
 
 function zoomIn() {
@@ -605,12 +829,40 @@ function initKeyboardShortcuts() {
       e.preventDefault();
       toggleSidebar();
     }
+
+    // Ctrl/Cmd + E: Toggle editor
+    if ((e.ctrlKey || e.metaKey) && e.key === 'e') {
+      e.preventDefault();
+      toggleEditor();
+    }
   });
+}
+
+// ================== Auth UI Setup ==================
+
+function setupAuthUI() {
+  // Update user display name
+  const userDisplayName = document.getElementById('user-display-name');
+  const adminLink = document.getElementById('admin-link');
+  
+  const user = getCurrentUser();
+  if (user && userDisplayName) {
+    userDisplayName.textContent = user.username;
+  }
+
+  // Show admin link only for admin users
+  if (user && user.role === 'admin' && adminLink) {
+    adminLink.classList.remove('hidden');
+    adminLink.classList.add('flex');
+  }
 }
 
 // ================== Initialization ==================
 
 document.addEventListener("DOMContentLoaded", async function () {
+  // Auth UI Setup
+  setupAuthUI();
+
   // Initialize CodeMirror
   editor = CodeMirror.fromTextArea(textArea, {
     mode: "yaml",
