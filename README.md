@@ -2,7 +2,7 @@
 
 A modern, feature-rich live editor for Mermaid diagrams. Create, edit, and preview Mermaid diagrams with syntax highlighting, zoom controls, and file management - all running entirely in your browser with no backend required!
 
-**[🚀 Live Demo](https://dedenbangkit.github.io/mermaid-live-editor/)**
+**[🚀 Live Demo](https://chart.rencanacerdas.com)**
 
 ![Mermaid Live Editor Screenshot](images/mermaid-live-editor.jpg)
 
